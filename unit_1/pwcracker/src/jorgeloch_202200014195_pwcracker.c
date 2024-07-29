@@ -1,169 +1,175 @@
-#include <stdbool.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
-#include <strings.h>
+#include <stdint.h>
 
 // Macro rand8
-# define rand8 ((rand () >> 8) & 0b111)
+# define rand8 ((hrand() >> 8) & 0b111)
+# define pw(p, i, n) ((i < n) ? (p[i]) : (p[i%n]*i))
 
-typedef struct user_info {
-  char login[8];
-  uint8_t hash[8];
-} user_info;
+// Número pseudo - aleatório
+static uint32_t ri = 1;
+// Função para ajuste de semente
+void hsrand ( uint32_t seed ) 
+{
+  ri = seed ;
+}
+// Função de número pseudo - aleatório
+uint16_t hrand () 
+{
+  // Calculando próximo número
+  ri = (1103515245 * ri) + 12345;
+  return (( ri >> 16) & 0x7FFF) ;
+}
 
-const static char possibilities[63] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789\0";
+// Função de hash MAU -64
+void MAU_64 (uint8_t* hash, const char* senha)
+{
+  // Declarando variáveis auxiliares
+  uint32_t i, n = strlen(senha), nr = 256, s = 0;
+  // Geração da semente a partir da senha ( sdbm )
+  for (i = 0; i < 8; i++) hash[i] = s = pw(senha,i,n) + (s << 6) + (s << 16) - s;
+  // Semente dos números pseudo - aleatórios
+  hsrand (s);
+  // Executando rodadas sobre os bytes do hash
+  for (i = 0; i < nr; i++)
+    hash[rand8] = hash[rand8] ^ hrand();
+}
 
-void MAU_64 (uint8_t * hash, const char* senha);
-bool task (user_info u, char* senha_resposta);
-void stringToByte(char *string, uint8_t *byteArray);
-void print_hash(uint8_t* hash);
-bool compare_hash(uint8_t* x, uint8_t* y);
-user_info read_from_file(FILE *file);
+typedef struct user {
+  char login[9];
+  uint64_t hash;
+  uint32_t original_index;
+  char senha[5]; 
+} user;
+
+static char possibilities[63] = "\0abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+
+void crack_hashes(user* users, uint32_t n_users);
+uint64_t hash_to_number(uint8_t *hash);
+int compare_users(const void* a, const void* b);
 
 int main (int argc, char** argv)
 {
   if (argc != 3)
   {
-    printf("Usage: %s <input>.txt <output>.txt\n", argv[0]);
-    return 1;
+    printf("usage: %s <input file> <output file>\n", argv[0]);
   }
-
   FILE *input = fopen(argv[1], "r");
   FILE *output = fopen(argv[2], "w");
 
-  int n_user_infos;
-  fscanf(input, "%d", &n_user_infos);
+  uint32_t n_users;
+  fscanf(input, "%u ", &n_users);
 
-  user_info *user_infos = (user_info*) malloc(n_user_infos * sizeof(user_info));
-  for (int i = 0; i < n_user_infos; i++)
+  user *users = (user*) calloc(n_users, sizeof(user));
+  for (int i = 0; i < n_users; i++)
   {
-    user_infos[i] = read_from_file(input);
+    fscanf(input, "%8[^:]:", users[i].login);
+    fscanf(input, "%lx ", &users[i].hash);
+    users[i].original_index = i;
   }
-  
-  for (int i = 0; i < n_user_infos; i++)
+
+  qsort(users, n_users, sizeof(user), compare_users);
+
+  crack_hashes(users, n_users);
+
+  for (int i = 0; i < n_users; i++)
   {
-    char senha_quebrada[5];
-    if (task(user_infos[i], senha_quebrada))
-    {
-      printf("encontramos a senha: %i\n", i + 1);
-      printf("%s:%s\n", user_infos[i].login, senha_quebrada);
-      fprintf(output, "%s:%s\n", user_infos[i].login, senha_quebrada);
-    }
+    printf("login: %s\n", users[i].login);
+    printf("senha: %s\n", users[i].senha);
   }
 
   fclose(input);
   fclose(output);
-
-  free(user_infos);
-
+  free(users);
   return 0;
 }
 
-// Função de hash MAU -64
-void MAU_64 (uint8_t * hash, const char* senha) {
-  // Declarando variáveis auxiliares
-  uint32_t i, n = strlen (senha) , nr = 256 , s = 0;
-  // Geração da semente a partir da senha (sdbm)
-  for (i = 0; i < n; i ++)
-    s = senha [i] + (s << 6) + (s << 16) - s;
-  // Semente dos números pseudo - aleatórios
-  srand (s) ;
-  // Executando rodadas sobre os bytes do hash
-  for (i = 0; i < nr; i ++)
-    hash [rand8] = hash [rand8] ^ rand () ;
-}
-
-void stringToByte(char *string, uint8_t *byteArray)
+uint64_t hash_to_number(uint8_t* array)
 {
-  if (strlen(string) != 16)
-    return;
-  for (int i = 0; i < 8; i++) 
-  {
-    char byteStr[3] = {string[2 * i], string[2 * i + 1], '\0'};
-    sscanf(byteStr, "%hhx", &byteArray[i]);
-  }
-}
-
-bool compare_hash(uint8_t* x, uint8_t* y)
-{
+  uint64_t result = 0;
   for (int i = 0; i < 8; i++)
   {
-    if (x[i] != y[i])
-      return false;
+    result = (result << 8) + array[i];
   }
-  return true;
+  return result;
 }
 
-bool task (user_info u, char* senha_resposta)
+int compare_users(const void* a, const void* b)
 {
-  for (int i = 0; i < 62; i++)
+  user *user_a = (user*) a;
+  user *user_b = (user*) b;
+  if (user_a->hash > user_b->hash)
   {
-    for (int j = 0; j < 62; j++)
-    {
-      for (int k = 62; k >= 0; k--)
-      {
-        for (int w = k == 62 ? 62 : 61; w >= 0; w++)
-        {
-          char senha[5];
-          senha[0] = possibilities[i];
-          senha[1] = possibilities[j];
-          senha[2] = possibilities[w];
-          senha[3] = possibilities[k];
-          senha[4] = '\0';
-          uint8_t *hash = (uint8_t*) calloc(8, sizeof(uint8_t));
-          MAU_64(hash, senha);
+    return 1;
+  }
+  else if (user_b->hash > user_a->hash)
+  {
+    return -1;
+  }
+  else 
+  {
+    return 0;
+  }
+}
 
-          if (compare_hash(hash, u.hash))
+bool search_hash(user* users, uint32_t n_users, uint64_t target, uint32_t* index)
+{
+  uint32_t left = 0, right = n_users,  middle;
+  while (left < right)
+  {
+    middle = left + (right - left) / 2;
+    if (users[middle].hash == target)
+    {
+      *index = middle;
+      return true;
+    }
+    else if (users[middle].hash > target)
+    {
+      right = middle;
+    }
+    else {
+      left = middle + 1;
+    }
+  }
+  return false;
+}
+
+void crack_hashes(user* users, uint32_t n_users)
+{
+  uint32_t counter = 0;
+  uint8_t buffer[8];
+  for (int i = 0; i < 63; i++)
+  {
+    for (int j = i == 0 ? 0 : 1; j < 63; j++)
+    {
+      for (int k = 1; k < 63; k++)
+      {
+        for (int l = 1; l < 63; l++)
+        {
+          char password[5] = {
+            possibilities[k],
+            possibilities[l],
+            possibilities[j],
+            possibilities[i],
+            '\0'
+          };
+
+          MAU_64(buffer, password);
+          uint64_t new_hash = hash_to_number(buffer);
+          
+          uint32_t index;
+          if (search_hash(users, n_users, new_hash, &index))
           {
-            printf("Senha encontrada!\n");
-            strcpy(senha_resposta, senha);
-            free(hash);
-            return true;
+            counter++;
+            strcpy(users[index].senha, password);
+            if (counter == n_users) return; 
           }
-          free(hash);
         }
       }
     }
   }
-  printf("Senha não encontrada\n");
-  return false;
-}
-
-void print_hash(uint8_t* hash)
-{
-  for (int i = 0; i < 8; i++)
-  {
-    printf("%hhx", hash[i]);
-  }
-  printf("\n"); 
-}
-
-user_info convert_line_to_user_info(char *line)
-{
-  user_info result;
-  int index = 0;
-  char token = *line + index;
-  while (token != ':')
-  {
-
-  }
-}
-
-user_info read_from_file(FILE *file)
-{
-  user_info result;
-  char *buffer = (char*) calloc(14, sizeof(char));
-  fscanf(file, "%s:", buffer);
-
-  result = convert_line_to_user_info(buffer);
-  printf("Login: %s\n", result.login);
-  printf("Hash: ");
-  print_hash(result.hash);
-
-  free(buffer);
-
-  return result;
+  return;
 }
 
