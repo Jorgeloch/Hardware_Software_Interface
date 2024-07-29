@@ -1,10 +1,12 @@
-.PHONY: all hash pwtracker
+.PHONY: all hash pwcracker
 
-all: hash pwtracker
+all: hash pwcracker
 
-hash: cmd/api/main.go
+hash: ./src/hash.c
 	gcc src/hash.c -o bin/hash
 
-pwtracker: src/jorgeloch_202200014195_pwtracker.c
-	gcc -Wall -g src/jorgeloch_202200014195_pwtracker.c -o bin/pwtracker
+pwcracker: ./src/jorgeloch_202200014195_pwcracker.c
+	gcc -Wall -g src/jorgeloch_202200014195_pwcracker.c -o bin/pwcracker
 
+optimized: ./src/jorgeloch_202200014195_pwcracker.c
+	gcc -Wall -O3 src/jorgeloch_202200014195_pwcracker.c -o bin/pwcracker
